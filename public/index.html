@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wire — IT-новини без зайвого</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">Wire</span>
+      <span class="brand-sub">чотири джерела, одна стрічка</span>
+    </div>
+    <div class="topbar-right">
+      <span class="updated" id="updated">оновлюється…</span>
+      <button class="bell" id="bell" title="Увімкнути сповіщення">Сповіщення: вимкнено</button>
+    </div>
+  </header>
+
+  <nav class="filters" id="filters">
+    <button class="chip active" data-source="">Усі</button>
+  </nav>
+
+  <main id="feed" class="feed">
+    <p class="empty">Завантажую новини…</p>
+  </main>
+
+  <footer class="foot">
+    <span>Джерела редагуються у <code>feeds.json</code>.</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

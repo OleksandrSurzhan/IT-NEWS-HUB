@@ -1,0 +1,7 @@
+[
+  { "id": "techcrunch", "name": "TechCrunch", "url": "https://techcrunch.com/feed/" },
+  { "id": "ain", "name": "AIN.UA", "url": "https://ain.ua/feed/" },
+  { "id": "speka", "name": "SPEKA", "url": "https://speka.ua/rss" },
+
+  { "id": "theverge", "name": "The Verge", "url": "https://www.theverge.com/rss/index.xml" }
+]
