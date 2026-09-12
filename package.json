@@ -4,6 +4,9 @@
   "description": "Mini IT news aggregator — pulls RSS from several sites, scores importance, serves a single page with browser notifications for new top stories.",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"

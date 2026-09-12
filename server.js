@@ -45,6 +45,7 @@ async function fetchAllFeeds() {
         link: item.link,
         source: feed.name,
         sourceId: feed.id,
+        lang: feed.lang || 'uk',
         summary: (item.contentSnippet || '').slice(0, 220),
         publishedAt: item.isoDate || item.pubDate || null,
       }));
@@ -65,8 +66,37 @@ async function fetchAllFeeds() {
   });
 
   items.sort((a, b) => b.score - a.score);
+  await translateEnglishItems(items);
   cache = items;
   console.log(`[refresh] ${items.length} items from ${FEEDS.length} sources at ${new Date().toLocaleString()}`);
+}
+
+// Free machine translation (MyMemory API, no key needed) for English
+// sources. Title + summary are sent together in one call per item to
+// stay within the free daily quota. Failures are silent — the item
+// just keeps its original English text.
+async function translateText(text) {
+  if (!text) return text;
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|uk`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data?.responseData?.translatedText || text;
+}
+
+async function translateEnglishItems(items) {
+  const targets = items.filter((i) => i.lang === 'en');
+  for (const item of targets) {
+    try {
+      const combined = `${item.title} ||| ${item.summary}`;
+      const translated = await translateText(combined);
+      const [title, summary] = translated.split('|||').map((s) => s && s.trim());
+      if (title) item.titleUk = title;
+      if (summary) item.summaryUk = summary;
+    } catch (e) {
+      // Leave original English text if translation fails — never block the feed on it.
+    }
+    await new Promise((r) => setTimeout(r, 250)); // be gentle with the free API
+  }
 }
 
 app.use(express.static(path.join(__dirname, 'public')));

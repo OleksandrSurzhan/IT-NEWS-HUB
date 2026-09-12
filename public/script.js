@@ -56,11 +56,12 @@ function renderItems(items) {
     el.innerHTML = `
       <div class="item-bar" style="opacity:${barOpacity.toFixed(2)}"></div>
       <div class="item-body">
-        <h2 class="item-title"><a href="${item.link}" target="_blank" rel="noopener">${item.title}</a></h2>
-        ${item.summary ? `<p class="item-summary">${item.summary}</p>` : ''}
+        <h2 class="item-title"><a href="${item.link}" target="_blank" rel="noopener">${item.titleUk || item.title}</a></h2>
+        ${(item.summaryUk || item.summary) ? `<p class="item-summary">${item.summaryUk || item.summary}</p>` : ''}
         <div class="item-meta">
           <span class="source">${item.source}</span>
           <span>${timeAgo(item.publishedAt)}</span>
+          ${item.lang === 'en' ? '<span class="orig-badge">переклад</span>' : ''}
         </div>
       </div>
     `;
@@ -122,3 +123,7 @@ bellEl.addEventListener('click', async () => {
 setBellUI(localStorage.getItem(NOTIF_KEY) === '1');
 load();
 setInterval(load, 5 * 60 * 1000); // re-poll every 5 minutes
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+}
