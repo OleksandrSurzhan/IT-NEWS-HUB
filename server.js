@@ -9,50 +9,46 @@ const app = express();
 const parser = new Parser({ timeout: 15000 });
 const PORT = process.env.PORT || 3300;
 
-const feedsPath = path.join(__dirname, 'feeds.json');
 const FEEDS = JSON.parse(
-  fs.readFileSync(feedsPath, 'utf-8')
+  fs.readFileSync(
+    path.join(__dirname, 'feeds.json'),
+    'utf-8'
+  )
 );
 
 const BOOST_KEYWORDS = [
-  'ai',
-  'ші',
-  'штучний інтелект',
-  'openai',
-  'anthropic',
-  'google',
-  'apple',
-  'microsoft',
-  'meta',
-  'nvidia',
-  'launch',
-  'запуск',
-  'funding',
-  'інвестиц',
-  'раунд',
-  'acquisition',
-  'придбала',
-  'закон',
-  'регулювання',
-  'security',
-  'вразливість',
-  'breach',
-  'ipo'
+  'ai', 'ші', 'штучний інтелект',
+  'openai', 'anthropic', 'google',
+  'apple', 'microsoft', 'meta',
+  'nvidia', 'launch', 'запуск',
+  'funding', 'інвестиц', 'раунд',
+  'acquisition', 'придбала',
+  'закон', 'регулювання',
+  'security', 'вразливість',
+  'breach', 'ipo'
 ];
 
 let cache = [];
+let refreshing = false;
+let translating = false;
+
+const translationCache = new Map();
 
 
 // =========================
-// ОЦІНКА НОВИН
+// HELPERS
 // =========================
+
+function cleanText(text) {
+  return String(text || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function scoreItem(item) {
   const date =
-    item.publishedAt ||
-    item.isoDate ||
-    item.pubDate ||
-    Date.now();
+    item.publishedAt || Date.now();
 
   const ageHours =
     (Date.now() - new Date(date)) / 36e5;
@@ -64,8 +60,8 @@ function scoreItem(item) {
     `${item.title || ''} ${item.summary || ''}`
       .toLowerCase();
 
-  const hits = BOOST_KEYWORDS.filter((keyword) =>
-    haystack.includes(keyword)
+  const hits = BOOST_KEYWORDS.filter(
+    (keyword) => haystack.includes(keyword)
   ).length;
 
   const keywordScore =
@@ -81,16 +77,8 @@ function scoreItem(item) {
 
 
 // =========================
-// ПЕРЕКЛАД EN -> UK
+// TRANSLATION
 // =========================
-
-const translationCache = new Map();
-
-function cleanText(text) {
-  return String(text || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 async function translateText(text) {
   const clean = cleanText(text);
@@ -110,9 +98,7 @@ async function translateText(text) {
     const translated =
       cleanText(result?.text);
 
-    if (!translated) {
-      return null;
-    }
+    if (!translated) return null;
 
     translationCache.set(
       clean,
@@ -133,67 +119,90 @@ async function translateText(text) {
 
 
 async function translateEnglishItems(items) {
-  const targets = items.filter(
-    (item) => item.lang === 'en'
-  );
+  if (translating) return;
 
-  console.log(
-    `[translation] ${targets.length} English items`
-  );
+  translating = true;
 
-  const BATCH_SIZE = 5;
-
-  for (
-    let i = 0;
-    i < targets.length;
-    i += BATCH_SIZE
-  ) {
-    const batch =
-      targets.slice(i, i + BATCH_SIZE);
-
-    await Promise.all(
-      batch.map(async (item) => {
-        const [
-          titleUk,
-          summaryUk
-        ] = await Promise.all([
-          translateText(item.title),
-
-          item.summary
-            ? translateText(item.summary)
-            : Promise.resolve(null)
-        ]);
-
-        if (titleUk) {
-          item.titleOriginal = item.title;
-          item.title = titleUk;
-          item.titleUk = titleUk;
-          item.translated = true;
-        } else {
-          item.translated = false;
-        }
-
-        if (summaryUk) {
-          item.summaryOriginal =
-            item.summary;
-
-          item.summary = summaryUk;
-          item.summaryUk = summaryUk;
-        }
-      })
+  try {
+    const targets = items.filter(
+      (item) =>
+        item.lang === 'en' &&
+        !item.translated
     );
 
-    if (i + BATCH_SIZE < targets.length) {
+    console.log(
+      `[translation] ${targets.length} items`
+    );
+
+    const BATCH_SIZE = 3;
+
+    for (
+      let i = 0;
+      i < targets.length;
+      i += BATCH_SIZE
+    ) {
+      const batch =
+        targets.slice(i, i + BATCH_SIZE);
+
+      await Promise.all(
+        batch.map(async (item) => {
+          try {
+            const [titleUk, summaryUk] =
+              await Promise.all([
+                translateText(item.title),
+
+                item.summary
+                  ? translateText(item.summary)
+                  : Promise.resolve(null)
+              ]);
+
+            if (titleUk) {
+              item.titleOriginal =
+                item.title;
+
+              item.title =
+                titleUk;
+
+              item.titleUk =
+                titleUk;
+
+              item.translated =
+                true;
+            }
+
+            if (summaryUk) {
+              item.summaryOriginal =
+                item.summary;
+
+              item.summary =
+                summaryUk;
+
+              item.summaryUk =
+                summaryUk;
+            }
+
+          } catch (error) {
+            console.warn(
+              '[item translation error]',
+              error?.message || error
+            );
+          }
+        })
+      );
+
       await new Promise(
         (resolve) =>
-          setTimeout(resolve, 300)
+          setTimeout(resolve, 250)
       );
     }
-  }
 
-  console.log(
-    '[translation] finished'
-  );
+    console.log(
+      '[translation] finished'
+    );
+
+  } finally {
+    translating = false;
+  }
 }
 
 
@@ -202,102 +211,133 @@ async function translateEnglishItems(items) {
 // =========================
 
 async function fetchAllFeeds() {
+  if (refreshing) {
+    console.log(
+      '[refresh] already running'
+    );
+    return;
+  }
+
+  refreshing = true;
+
   console.log(
     '[refresh] Loading RSS feeds...'
   );
 
-  const results =
-    await Promise.allSettled(
-      FEEDS.map(async (feed) => {
-        const parsed =
-          await parser.parseURL(feed.url);
-
-        return (parsed.items || [])
-          .slice(0, 20)
-          .map((item) => ({
-            id:
-              item.guid ||
-              item.link,
-
-            title:
-              item.title ||
-              'Без заголовка',
-
-            link:
-              item.link,
-
-            source:
-              feed.name,
-
-            sourceId:
-              feed.id,
-
-            lang:
-              feed.lang || 'uk',
-
-            summary:
-              cleanText(
-                item.contentSnippet ||
-                item.content ||
-                ''
-              ).slice(0, 220),
-
-            publishedAt:
-              item.isoDate ||
-              item.pubDate ||
-              null
-          }));
-      })
-    );
-
-  const items = [];
-
-  results.forEach(
-    (result, index) => {
-      if (
-        result.status ===
-        'fulfilled'
-      ) {
-        items.push(
-          ...result.value
-        );
-      } else {
-        console.error(
-          `[feed error] ${FEEDS[index].name}:`,
-          result.reason?.message ||
-          result.reason
-        );
-      }
-    }
-  );
-
-  items.forEach((item) => {
-    item.score =
-      scoreItem(item);
-  });
-
-  items.sort(
-    (a, b) =>
-      b.score - a.score
-  );
-
   try {
-    await translateEnglishItems(
-      items
+    const results =
+      await Promise.allSettled(
+        FEEDS.map(async (feed) => {
+          const parsed =
+            await parser.parseURL(feed.url);
+
+          return (parsed.items || [])
+            .slice(0, 20)
+            .map((item) => ({
+              id:
+                item.guid ||
+                item.link,
+
+              title:
+                cleanText(
+                  item.title ||
+                  'Без заголовка'
+                ),
+
+              link:
+                item.link,
+
+              source:
+                feed.name,
+
+              sourceId:
+                feed.id,
+
+              lang:
+                feed.lang || 'uk',
+
+              summary:
+                cleanText(
+                  item.contentSnippet ||
+                  item.content ||
+                  ''
+                ).slice(0, 220),
+
+              publishedAt:
+                item.isoDate ||
+                item.pubDate ||
+                null,
+
+              translated: false
+            }));
+        })
+      );
+
+    const items = [];
+
+    results.forEach(
+      (result, index) => {
+        if (
+          result.status ===
+          'fulfilled'
+        ) {
+          items.push(
+            ...result.value
+          );
+        } else {
+          console.error(
+            `[feed error] ${FEEDS[index].name}:`,
+            result.reason?.message ||
+            result.reason
+          );
+        }
+      }
     );
+
+    items.forEach((item) => {
+      item.score =
+        scoreItem(item);
+    });
+
+    items.sort(
+      (a, b) =>
+        b.score - a.score
+    );
+
+    /*
+      ВАЖЛИВО:
+      одразу віддаємо новини сайту.
+      Переклад НЕ блокує запуск.
+    */
+
+    cache = items;
+
+    console.log(
+      `[refresh] ${items.length} items ready`
+    );
+
+    /*
+      Переклад запускаємо у фоні.
+      await тут спеціально НЕ ставимо.
+    */
+
+    translateEnglishItems(cache)
+      .catch((error) => {
+        console.warn(
+          '[background translation error]',
+          error?.message || error
+        );
+      });
+
   } catch (error) {
-    console.warn(
-      '[translation unavailable]',
-      error?.message || error
+    console.error(
+      '[refresh error]',
+      error
     );
+
+  } finally {
+    refreshing = false;
   }
-
-  cache = items;
-
-  console.log(
-    `[refresh] ${items.length} items from ` +
-    `${FEEDS.length} sources`
-  );
 }
 
 
@@ -316,35 +356,51 @@ app.use(
 
 
 // =========================
-// API
+// STATUS
 // =========================
 
-app.get(
-  '/api/news',
-  (req, res) => {
-    const { source } =
-      req.query;
+app.get('/api/status', (req, res) => {
+  res.json({
+    ready: cache.length > 0,
+    refreshing,
+    translating,
+    count: cache.length
+  });
+});
 
-    const data = source
-      ? cache.filter(
-          (item) =>
-            item.sourceId ===
-            source
-        )
-      : cache;
 
-    res.json({
-      updatedAt:
-        new Date().toISOString(),
+// =========================
+// NEWS API
+// =========================
 
-      sources:
-        FEEDS,
+app.get('/api/news', (req, res) => {
+  const { source } = req.query;
 
-      items:
-        data
-    });
-  }
-);
+  const data = source
+    ? cache.filter(
+        (item) =>
+          item.sourceId === source
+      )
+    : cache;
+
+  res.json({
+    updatedAt:
+      new Date().toISOString(),
+
+    ready:
+      cache.length > 0,
+
+    refreshing,
+
+    translating,
+
+    sources:
+      FEEDS,
+
+    items:
+      data
+  });
+});
 
 
 // =========================
@@ -354,41 +410,57 @@ app.get(
 app.get(
   '/api/refresh',
   async (req, res) => {
-    try {
-      await fetchAllFeeds();
-
-      res.json({
+    if (refreshing) {
+      return res.json({
         ok: true,
-        count: cache.length
-      });
-
-    } catch (error) {
-      console.error(
-        '[refresh error]',
-        error
-      );
-
-      res.status(500).json({
-        ok: false,
-        error: 'Refresh failed'
+        refreshing: true,
+        message:
+          'Оновлення вже виконується'
       });
     }
+
+    await fetchAllFeeds();
+
+    res.json({
+      ok: true,
+      count: cache.length
+    });
   }
 );
 
 
 // =========================
-// STARTUP
+// HEALTH CHECK
 // =========================
 
-fetchAllFeeds().catch(
-  (error) => {
-    console.error(
-      'Initial fetch failed:',
-      error
-    );
-  }
-);
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+
+// =========================
+// SERVER
+// =========================
+
+app.listen(PORT, () => {
+  console.log(
+    `IT News Hub running on port ${PORT}`
+  );
+
+  /*
+    Спочатку запускаємо сервер.
+    Потім завантажуємо RSS.
+  */
+
+  fetchAllFeeds().catch(
+    (error) => {
+      console.error(
+        'Initial fetch failed:',
+        error
+      );
+    }
+  );
+});
 
 
 // =========================
@@ -405,20 +477,6 @@ cron.schedule(
           error
         );
       }
-    );
-  }
-);
-
-
-// =========================
-// SERVER
-// =========================
-
-app.listen(
-  PORT,
-  () => {
-    console.log(
-      `IT News Hub running on port ${PORT}`
     );
   }
 );
