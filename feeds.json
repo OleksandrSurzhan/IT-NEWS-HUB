@@ -1,7 +1,38 @@
 [
-  { "id": "techcrunch", "name": "TechCrunch", "url": "https://techcrunch.com/feed/", "lang": "en" },
-  { "id": "ain", "name": "AIN.UA", "url": "https://ain.ua/feed/", "lang": "uk" },
-  { "id": "speka", "name": "SPEKA", "url": "https://speka.ua/rss", "lang": "uk" },
-
-  { "id": "theverge", "name": "The Verge", "url": "https://www.theverge.com/rss/index.xml", "lang": "en" }
+  {
+    "id": "techcrunch",
+    "name": "TechCrunch",
+    "url": "https://techcrunch.com/feed/",
+    "lang": "en"
+  },
+  {
+    "id": "ain",
+    "name": "AIN.UA",
+    "url": "https://ain.ua/feed/",
+    "lang": "uk"
+  },
+  {
+    "id": "speka",
+    "name": "SPEKA",
+    "url": "https://speka.ua/rss",
+    "lang": "uk"
+  },
+  {
+    "id": "theverge",
+    "name": "The Verge",
+    "url": "https://www.theverge.com/rss/index.xml",
+    "lang": "en"
+  },
+  {
+    "id": "arstechnica",
+    "name": "Ars Technica",
+    "url": "https://feeds.arstechnica.com/arstechnica/index",
+    "lang": "en"
+  },
+  {
+    "id": "wired",
+    "name": "WIRED",
+    "url": "https://www.wired.com/feed/rss",
+    "lang": "en"
+  }
 ]
