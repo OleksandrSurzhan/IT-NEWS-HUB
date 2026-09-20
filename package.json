@@ -1,7 +1,7 @@
 {
   "name": "it-news-hub",
   "version": "0.1.0",
-  "description": "Mini IT news aggregator — pulls RSS from several sites, scores importance, serves a single page with browser notifications for new top stories.",
+  "description": "Mini IT news aggregator",
   "main": "server.js",
   "type": "commonjs",
   "engines": {
@@ -14,6 +14,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "rss-parser": "^3.13.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "google-translate-api-x": "^10.7.2"
   }
 }
