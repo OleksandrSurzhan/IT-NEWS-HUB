@@ -4,6 +4,7 @@ const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const translate = require('google-translate-api-x');
+const cheerio = require('cheerio');
 
 const app = express();
 const parser = new Parser({ timeout: 15000 });
@@ -33,6 +34,7 @@ let refreshing = false;
 let translating = false;
 
 const translationCache = new Map();
+const articleCache = new Map();
 
 
 // =========================
@@ -118,6 +120,60 @@ async function translateText(text) {
 }
 
 
+// =========================
+// ARTICLE TRANSLATION
+// =========================
+
+async function translateArticle(text) {
+  if (!text) return '';
+
+  /*
+    Перекладаємо частинами,
+    щоб не відправляти величезний текст
+    одним запитом.
+  */
+
+  const paragraphs =
+    text
+      .split('\n')
+      .map(cleanText)
+      .filter(Boolean);
+
+  const translated = [];
+
+  for (const paragraph of paragraphs) {
+
+    /*
+      Дуже довгі абзаци ріжемо.
+    */
+
+    const chunks =
+      paragraph.match(/.{1,1500}(?:\s|$)/g) ||
+      [paragraph];
+
+    for (const chunk of chunks) {
+      const result =
+        await translateText(chunk);
+
+      translated.push(
+        result || chunk
+      );
+
+      await new Promise(
+        (resolve) =>
+          setTimeout(resolve, 150)
+      );
+    }
+  }
+
+  return translated.join('\n\n');
+}
+
+
+// =========================
+// RSS TRANSLATION
+// =========================
+
 async function translateEnglishItems(items) {
   if (translating) return;
 
@@ -146,6 +202,7 @@ async function translateEnglishItems(items) {
 
       await Promise.all(
         batch.map(async (item) => {
+
           try {
             const [titleUk, summaryUk] =
               await Promise.all([
@@ -207,16 +264,182 @@ async function translateEnglishItems(items) {
 
 
 // =========================
+// ARTICLE EXTRACTOR
+// =========================
+
+async function fetchArticle(url) {
+
+  const cached =
+    articleCache.get(url);
+
+  if (cached) {
+    return cached;
+  }
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () => controller.abort(),
+      15000
+    );
+
+  try {
+
+    const response =
+      await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 Wire-IT-News-Hub/1.0',
+          'Accept':
+            'text/html,application/xhtml+xml'
+        }
+      });
+
+    if (!response.ok) {
+      throw new Error(
+        `Article HTTP ${response.status}`
+      );
+    }
+
+    const html =
+      await response.text();
+
+    const $ =
+      cheerio.load(html);
+
+    /*
+      Прибираємо все зайве.
+    */
+
+    $(
+      [
+        'script',
+        'style',
+        'nav',
+        'header',
+        'footer',
+        'aside',
+        'form',
+        'button',
+        'iframe',
+        'noscript',
+        '.advertisement',
+        '.ad',
+        '.ads',
+        '.social',
+        '.share',
+        '.newsletter',
+        '.related'
+      ].join(',')
+    ).remove();
+
+
+    /*
+      Шукаємо контейнер статті.
+      Підходить для більшості
+      новинних сайтів.
+    */
+
+    const selectors = [
+      'article',
+      '[itemprop="articleBody"]',
+      '.article-body',
+      '.article-content',
+      '.entry-content',
+      '.post-content',
+      '.story-body',
+      'main'
+    ];
+
+    let container = null;
+
+    for (const selector of selectors) {
+      const found = $(selector);
+
+      if (
+        found.length &&
+        cleanText(found.text()).length > 300
+      ) {
+        container = found.first();
+        break;
+      }
+    }
+
+    if (!container) {
+      throw new Error(
+        'Article body not found'
+      );
+    }
+
+
+    /*
+      Беремо заголовки та абзаци.
+    */
+
+    const paragraphs = [];
+
+    container
+      .find('p, h2, h3')
+      .each((_, element) => {
+
+        const text =
+          cleanText(
+            $(element).text()
+          );
+
+        if (
+          text.length >= 30 &&
+          !paragraphs.includes(text)
+        ) {
+          paragraphs.push(text);
+        }
+      });
+
+
+    /*
+      Захист від величезних сторінок.
+    */
+
+    const articleText =
+      paragraphs
+        .join('\n\n')
+        .slice(0, 18000);
+
+    if (
+      articleText.length < 200
+    ) {
+      throw new Error(
+        'Article text too short'
+      );
+    }
+
+    const result = {
+      text: articleText
+    };
+
+    articleCache.set(
+      url,
+      result
+    );
+
+    return result;
+
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+// =========================
 // RSS
 // =========================
 
 async function fetchAllFeeds() {
-  if (refreshing) {
-    console.log(
-      '[refresh] already running'
-    );
-    return;
-  }
+
+  if (refreshing) return;
 
   refreshing = true;
 
@@ -225,15 +448,19 @@ async function fetchAllFeeds() {
   );
 
   try {
+
     const results =
       await Promise.allSettled(
+
         FEEDS.map(async (feed) => {
+
           const parsed =
             await parser.parseURL(feed.url);
 
           return (parsed.items || [])
             .slice(0, 20)
             .map((item) => ({
+
               id:
                 item.guid ||
                 item.link,
@@ -277,6 +504,7 @@ async function fetchAllFeeds() {
 
     results.forEach(
       (result, index) => {
+
         if (
           result.status ===
           'fulfilled'
@@ -284,7 +512,9 @@ async function fetchAllFeeds() {
           items.push(
             ...result.value
           );
+
         } else {
+
           console.error(
             `[feed error] ${FEEDS[index].name}:`,
             result.reason?.message ||
@@ -304,22 +534,11 @@ async function fetchAllFeeds() {
         b.score - a.score
     );
 
-    /*
-      ВАЖЛИВО:
-      одразу віддаємо новини сайту.
-      Переклад НЕ блокує запуск.
-    */
-
     cache = items;
 
     console.log(
       `[refresh] ${items.length} items ready`
     );
-
-    /*
-      Переклад запускаємо у фоні.
-      await тут спеціально НЕ ставимо.
-    */
 
     translateEnglishItems(cache)
       .catch((error) => {
@@ -330,12 +549,14 @@ async function fetchAllFeeds() {
       });
 
   } catch (error) {
+
     console.error(
       '[refresh error]',
       error
     );
 
   } finally {
+
     refreshing = false;
   }
 }
@@ -359,63 +580,168 @@ app.use(
 // STATUS
 // =========================
 
-app.get('/api/status', (req, res) => {
-  res.json({
-    ready: cache.length > 0,
-    refreshing,
-    translating,
-    count: cache.length
-  });
-});
+app.get(
+  '/api/status',
+  (req, res) => {
+
+    res.json({
+      ready:
+        cache.length > 0,
+
+      refreshing,
+      translating,
+
+      count:
+        cache.length
+    });
+  }
+);
 
 
 // =========================
 // NEWS API
 // =========================
 
-app.get('/api/news', (req, res) => {
-  const { source } = req.query;
+app.get(
+  '/api/news',
+  (req, res) => {
 
-  const data = source
-    ? cache.filter(
-        (item) =>
-          item.sourceId === source
-      )
-    : cache;
+    const { source } =
+      req.query;
 
-  res.json({
-    updatedAt:
-      new Date().toISOString(),
+    const data =
+      source
+        ? cache.filter(
+            (item) =>
+              item.sourceId === source
+          )
+        : cache;
 
-    ready:
-      cache.length > 0,
+    res.json({
+      updatedAt:
+        new Date().toISOString(),
 
-    refreshing,
+      ready:
+        cache.length > 0,
 
-    translating,
+      refreshing,
+      translating,
 
-    sources:
-      FEEDS,
+      sources:
+        FEEDS,
 
-    items:
-      data
-  });
-});
+      items:
+        data
+    });
+  }
+);
 
 
 // =========================
-// MANUAL REFRESH
+// FULL ARTICLE API
+// =========================
+
+app.get(
+  '/api/article',
+  async (req, res) => {
+
+    const url =
+      String(
+        req.query.url || ''
+      );
+
+    /*
+      Дозволяємо відкривати тільки URL,
+      які реально є в нашій RSS-стрічці.
+    */
+
+    const item =
+      cache.find(
+        (news) =>
+          news.link === url
+      );
+
+    if (!item) {
+      return res
+        .status(404)
+        .json({
+          ok: false,
+          error:
+            'Article not found'
+        });
+    }
+
+    try {
+
+      const article =
+        await fetchArticle(url);
+
+      let text =
+        article.text;
+
+      /*
+        Англійські статті
+        перекладаємо українською.
+      */
+
+      if (item.lang === 'en') {
+        text =
+          await translateArticle(
+            article.text
+          );
+      }
+
+      res.json({
+        ok: true,
+
+        title:
+          item.titleUk ||
+          item.title,
+
+        source:
+          item.source,
+
+        originalUrl:
+          item.link,
+
+        translated:
+          item.lang === 'en',
+
+        text
+      });
+
+    } catch (error) {
+
+      console.error(
+        '[article error]',
+        error?.message || error
+      );
+
+      res
+        .status(500)
+        .json({
+          ok: false,
+
+          error:
+            'Не вдалося завантажити повну статтю.'
+        });
+    }
+  }
+);
+
+
+// =========================
+// REFRESH
 // =========================
 
 app.get(
   '/api/refresh',
   async (req, res) => {
+
     if (refreshing) {
       return res.json({
         ok: true,
-        refreshing: true,
-        message:
-          'Оновлення вже виконується'
+        refreshing: true
       });
     }
 
@@ -423,44 +749,49 @@ app.get(
 
     res.json({
       ok: true,
-      count: cache.length
+      count:
+        cache.length
     });
   }
 );
 
 
 // =========================
-// HEALTH CHECK
+// HEALTH
 // =========================
 
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
+app.get(
+  '/health',
+  (req, res) => {
+    res
+      .status(200)
+      .send('OK');
+  }
+);
 
 
 // =========================
 // SERVER
 // =========================
 
-app.listen(PORT, () => {
-  console.log(
-    `IT News Hub running on port ${PORT}`
-  );
+app.listen(
+  PORT,
+  () => {
 
-  /*
-    Спочатку запускаємо сервер.
-    Потім завантажуємо RSS.
-  */
+    console.log(
+      `IT News Hub running on port ${PORT}`
+    );
 
-  fetchAllFeeds().catch(
-    (error) => {
-      console.error(
-        'Initial fetch failed:',
-        error
-      );
-    }
-  );
-});
+    fetchAllFeeds()
+      .catch((error) => {
+
+        console.error(
+          'Initial fetch failed:',
+          error
+        );
+      });
+  }
+);
 
 
 // =========================
@@ -470,13 +801,14 @@ app.listen(PORT, () => {
 cron.schedule(
   '0 * * * *',
   () => {
-    fetchAllFeeds().catch(
-      (error) => {
+
+    fetchAllFeeds()
+      .catch((error) => {
+
         console.error(
           'Refresh failed:',
           error
         );
-      }
-    );
+      });
   }
 );
